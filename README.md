@@ -7,4 +7,4 @@ Practical Machine Learning
 
 ## Notes to graders
 
-### more ...
+Please download the HTML for viewing. Thank you.
