@@ -1,0 +1,178 @@
+---
+title: "HAR"
+author: "Enzo Alda"
+date: "Sunday, January 25, 2015"
+output: html_document
+---
+
+## Motivation
+This document describes the analysis of data collected as part of a human activity recognition (HAR) experiment. The data was obtained from accelerometers on the belt, forearm, arm, and dumbell of 6 participants, while performing a series of exercises. They were asked to perform barbell lifts correctly andincorrectly in 5 different ways.
+More information is available in the Weight Lifting Exercise Dataset section from the website here: http://groupware.les.inf.puc-rio.br/har.
+
+The  aim of the analysis here presented is to develop a predictive algorithm to determine how well a subject is performing a given exercise given the data from the sensors: i.e. which one of  the 5 categories best corresponds to a given observation.
+
+## Data loading and pre-processing
+
+We eliminated variables that only have values on the 'new window' observation on the basis that such records (406 in total) were very few compared to the size of the dataset. We considered imputing those values, as they appear to be related to the entire window, to the other observations in the same window. However decided against doing so for several reasons: 1) some values were missing (or divide by zero errors) on those observations as well, and 2) a quick preliminary analysis of the distribution of a handful of variates of those 406 records across the different classification categories ('classe') revealed nothing of particular interesting. Therefore we concluded that efforts to add information from those 406 records were not worth the trouble. Those variables have names matching patterns: "kurtosis", "skewness", "max", "min", "amplitude", "var", "avg", and "stddev". We also eliminated timestamps, window numbers, the new window indicator, and the sequential number 'X' on the basis that those variables cannot be meaningful when predicting new, out-of-sample, observations: e.g. what is "your" 'X' or your window number if you want to apply a model to yourself to predict how well you are exercising, later on.
+
+A controversial decision: we did leave 'user_name' as a predictor. To the extent that different subjects in our training set may exhibit (we did not test for this) different measurement patterns relative to the 'classe' categories, we wanted to capture that information. The reason is simple: the 20 test cases (graded) did contain the same subjects. That is a "bad" reason for keeping such variable. If we want our model to generalize well to other people, which is a reasonable, and presumably the noble goal, for a study like this, we should leave it out, or replace it with subject related biomeasures that can be taken on new subjects, like weight, height, etc. So, we are guilty as charged: normally we would exlclude such variable, but we didn't. We could easily rebuild our models without the subjects and see if we gained any value from our "cheating". For the sake of brevity we didn't.
+
+Last, but very important, the so-called "testing" set of 20 observations is really a "challenge" test set for grading purposes. It has very few observations, for obvious reasons. We need to set aside a test set of reasonable size, and refrain from using when building our models, in order to peroperly assess our out-of-sample error.
+
+
+```{r}
+# Libraries used
+library(caret);
+library(ggplot2);
+library(randomForest);
+
+# Note that 'pml-training' is actually our entire data set
+data <- read.csv("pml-training.csv");
+
+# Discard columns
+column.names <- names(data);
+discard.pattern <- c(
+    "X", "timestamp", "window",
+    "kurtosis_", "skewness_",
+    "max_", "min_", "amplitude_",
+    "var_", "avg_", "stddev_"
+);
+discarded <- NULL;
+for (pattern in discard.pattern) {
+    discarded <- c(discarded, grep(pattern, column.names))
+}
+discarded <- column.names[discarded];
+for (column in discarded) {
+    data[column] <- NULL;
+}
+
+# Done discarding. Split data into training and test sets.
+# Set seed for partition reproducibility
+set.seed(32343);
+# Partition data
+sub <- createDataPartition(y = data$classe, p = 0.80, list = FALSE);
+training <- data[sub,];
+testing <- data[-sub,];
+```
+
+## Model selection and testing
+
+We first tried a pure linear model. Note that the factor levels (A,B,C,D,E) of the 'classe' variable form a ranking. So we convert 'classe', for the purpose of building the model, into a numerical variable (with values 1,2,3,4,5) corresponding to the ordering of the original factor levels.
+
+```{r model1, results='hide'}
+#
+# Model 1
+#
+model1 <- function(training, testing) {
+    # Set seed for reproducibility
+    set.seed(997);
+
+    # Clone training set (for dependent variable transformation)
+    training.lm <- training;
+    training.lm$nclasse <- as.numeric(training.lm$classe);
+    training.lm$classe <- NULL;
+    
+    # Train model
+    model <- train(nclasse ~ ., data = training.lm, method = "lm");
+    
+    # Compute predictions
+    predictions <- predict(model, newdata = testing);
+    predictions[predictions < 1] <- 1;
+    predictions[5 < predictions] <- 5;
+    predictions <- round(predictions);
+    
+    # Clone testing set (for dependent variable transformation)
+    testing.lm <- testing;
+    testing.lm$nclasse <- as.numeric(testing.lm$classe);
+
+    # Compute confusion matrix
+    confusion.matrix <- confusionMatrix(testing.lm$nclasse, predictions);
+    
+    # Free memory
+    training.lm <- NULL;
+    testing.lm <- NULL;
+    
+    # Return model and prediction results
+    list(model=model, result=confusion.matrix);
+}
+
+m1 <- model1(training, testing);
+```
+
+Here are the results for model 1.
+
+```{r}
+m1$model
+m1$result
+
+confusion.table.1 <- as.data.frame(m1$result$table);
+
+plot.1 <-
+    ggplot(confusion.table.1, aes(Reference, Prediction, group=Prediction)) +
+    ggtitle("Confusion Matrix Model 1") +
+    geom_tile(aes(fill = Freq)) + 
+    geom_text(aes(fill = Freq, label = Freq)) +
+    scale_fill_gradient(low = "light yellow", high = "red");
+
+plot.1
+```
+
+It is obvious that there is predictive power in this model, as evidenced by the aggregation of values along the diagonal. The statistical significance is high, but the accuracy of the model, a mere 43%, is very weak.
+
+We tried several models with different pre-processing and training methods, as well as choice of predictors. Some of our models used PCA. Others condensed measures taken over <x, y, z> axes into a single, corresponding, 'amplitude' measure, using formulae of the form: sqrt(measure.x^2, measure.y^2, measure.z^2). For brevity we only present here how we obtained the model used to predict the 20 test cases given as a challenge. The model produced a perfect prediction of the test set.
+
+Model 8 is a brute force (using all potential predictors) GBM model, with parameters estimated via cross-validation (10 K-folds).
+
+```{r model8, results='hide'}
+#
+# Model 8
+#
+model8 <- function(training, testing) {
+    # Define training control parameters
+    control <- trainControl(method="cv", number=10, repeats=1, allowParallel=T);
+    
+    # Train model
+    model <- train(classe ~ ., data=training, method="gbm", trControl=control, verbose=F);
+
+    # Compute predictions
+    predictions <- predict(model, newdata=testing);
+    # Compute confusion matrix
+    confusion.matrix <- confusionMatrix(testing$classe, predictions);
+    
+    # Return model and prediction results
+    list(model=model, result=confusion.matrix);
+}
+
+m8 <- model8(training, testing);
+```
+
+Here are the results for model 8:
+
+```{r}
+m8$model
+m8$result
+
+confusion.table.8 <- as.data.frame(m8$result$table);
+
+plot.8 <-
+    ggplot(confusion.table.8, aes(Reference, Prediction, group=Prediction)) +
+    ggtitle("Confusion Matrix Model 8") +
+    geom_tile(aes(fill = Freq)) + 
+    geom_text(aes(fill = Freq, label = Freq)) +
+    scale_fill_gradient(low = "light yellow", high = "red");
+
+plot.8
+```
+
+We can appreciate that this model has excellent predictive power. The out-of-sample error (mis-classification rate) is expected to be less than 5% based on the results obtained over the cross-validation samples. For additional verification, we now measure the mis-classification rate on the confusion matrix, which was obtained by comparing model predictions against the actual values on the testing set. Note that the testing set, which we set aside early on, was never taken into consideration while training our models, and is therefore an honest set for estimating out-of-sample error.
+
+```{r}
+table <- m8$result$table;
+total <- sum(table);
+ok <- sum(diag(5) * table);
+
+error <- 1 - ok/total;
+error
+```
+
+The mis-classification error is in line with the one computed over our cross-validation sets during the training phase.
