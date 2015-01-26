@@ -164,7 +164,7 @@ plot.8 <-
 plot.8
 ```
 
-We can appreciate that this model has excellent predictive power. The out-of-sample error (mis-classification rate) is expected to be less than 5% based on the results obtained over the cross-validation samples. For additional verification, we now measure the mis-classification rate on the confusion matrix, which was obtained by comparing model predictions against the actual values on the testing set. Note that the testing set, which we set aside early on, was never taken into consideration while training our models, and is therefore an honest set for estimating out-of-sample error.
+We can appreciate that this model has excellent predictive power. The out-of-sample error (mis-classification rate) is expected to be less than 5% based on the classification rate accuracy of over 95% obtained by comparing model predictions against the actual values on the testing set. Note that the testing set, which we set aside early on, was never taken into consideration while training our models, and is therefore an honest set for estimating out-of-sample error. Here we show how to compute the error manually:
 
 ```{r}
 table <- m8$result$table;
@@ -175,4 +175,6 @@ error <- 1 - ok/total;
 error
 ```
 
-The mis-classification error is in line with the one computed over our cross-validation sets during the training phase.
+### References
+
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
